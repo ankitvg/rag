@@ -72,4 +72,11 @@ Explore the codebase to see how the RAG system works and tweak its parameters.
 - **Hyperparameters:** Open `src/config.py` to modify key values like `EMBEDDING_MODEL`, `DEFAULT_CHUNK_SIZE`, and `DEFAULT_OVERLAP`.
 - **Batch Processing:** In `src/rag_system.py`, you can adjust the `batch_size` within the `add_document` method to control how many chunks are processed at once.
 
+#### Use collections:
+```bash
+python src/cli.py --collection fiction add data/tom_sawyer.txt --id sawyer  
+python src/cli.py --collection fiction search "Who is accused of murdering Dr. Robinson?" --results 1
+python src/cli.py --collection fiction info
+```
+
 Experiment with these settings to see how they impact retrieval performance and resource usage.
