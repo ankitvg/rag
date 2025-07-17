@@ -48,46 +48,78 @@ class SimpleRAGSystem:
             return []
     
     def generate_chunks_from_file(self, file_path: Path, chunk_size: int = None, overlap: int = None):
-        """Read a file and yield chunks of text"""
+        """
+        Read a file and yield chunks of text using a recursive splitting strategy.
+        """
         chunk_size = chunk_size or Config.DEFAULT_CHUNK_SIZE
         overlap = overlap or Config.DEFAULT_OVERLAP
-
+        
         try:
             with open(file_path, 'r', encoding='utf-8') as file:
-                buffer = ""
-                while True:
-                    read_size = chunk_size - len(buffer)
-                    new_content = file.read(read_size)
-                    if not new_content:
-                        if buffer:
-                            yield re.sub(r'\s+', ' ', buffer.strip())
-                        break
-                    
-                    buffer += new_content
-                    
-                    # Find a good split point (sentence or word boundary)
-                    end_index = -1
-                    if len(buffer) >= chunk_size:
-                        sentence_end = buffer.rfind('.', 0, chunk_size)
-                        if sentence_end != -1:
-                            end_index = sentence_end + 1
-                        else:
-                            word_end = buffer.rfind(' ', 0, chunk_size)
-                            if word_end != -1:
-                                end_index = word_end + 1
-
-                    if end_index == -1 and len(buffer) < chunk_size and not new_content:
-                        end_index = len(buffer)
-
-                    if end_index != -1:
-                        chunk = buffer[:end_index].strip()
-                        if chunk:
-                            yield re.sub(r'\s+', ' ', chunk)
-                        buffer = buffer[end_index - overlap:]
-
+                text = file.read()
         except Exception as e:
-            console.print(f"❌ Error reading or chunking file: {e}", style="red")
+            console.print(f"❌ Error reading file: {e}", style="red")
             return
+
+        # Define the separators to use for splitting, in order of preference
+        separators = ["\n\n", "\n", ". ", " ", ""]
+        
+        def split_text(text_to_split: str, current_separators: List[str]) -> List[str]:
+            """Recursively split text to find chunks of the appropriate size."""
+            if len(text_to_split) <= chunk_size:
+                return [text_to_split]
+            
+            # Get the next separator to try
+            if not current_separators:
+                # If no more separators, just split by character length
+                return [text_to_split[i:i+chunk_size] for i in range(0, len(text_to_split), chunk_size)]
+
+            separator = current_separators[0]
+            remaining_separators = current_separators[1:]
+            
+            # Split the text by the current separator
+            splits = text_to_split.split(separator)
+            
+            # Process the splits
+            final_chunks = []
+            current_chunk = ""
+            for s in splits:
+                # If a split is too large, recurse
+                if len(s) > chunk_size:
+                    final_chunks.extend(split_text(s, remaining_separators))
+                    continue
+
+                # If adding the next split doesn't exceed chunk_size, append it
+                if len(current_chunk) + len(s) + len(separator) <= chunk_size:
+                    current_chunk += s + separator
+                else:
+                    # Otherwise, finalize the current_chunk and start a new one
+                    final_chunks.append(current_chunk.strip())
+                    current_chunk = s + separator
+            
+            # Add the last remaining chunk
+            if current_chunk:
+                final_chunks.append(current_chunk.strip())
+                
+            return final_chunks
+
+        # Start the recursive splitting process
+        initial_chunks = split_text(text, separators)
+        
+        # Handle overlap
+        if overlap > 0 and len(initial_chunks) > 1:
+            overlapped_chunks = [initial_chunks[0]]
+            for i in range(1, len(initial_chunks)):
+                # Get the last `overlap` characters from the previous chunk
+                prev_chunk_overlap = overlapped_chunks[-1][-overlap:]
+                # Prepend it to the current chunk
+                overlapped_chunks.append(prev_chunk_overlap + initial_chunks[i])
+            
+            for chunk in overlapped_chunks:
+                yield re.sub(r'\s+', ' ', chunk.strip())
+        else:
+            for chunk in initial_chunks:
+                yield re.sub(r'\s+', ' ', chunk.strip())
 
     def add_document(self, file_path: str, document_id: str = None):
         """Add a document to the vector database from a file path"""
@@ -97,6 +129,28 @@ class SimpleRAGSystem:
             return
 
         doc_id = document_id or path.stem
+
+        # --- New Feature: Display Document Info ---
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            word_count = len(content.split())
+            
+            console.print(f"📄 [bold]Processing document:[/] [cyan]{path.name}[/]")
+            console.print(f"   - [bold]Word Count:[/] {word_count}")
+            console.print(f"   - [bold]Chunk Size:[/] {Config.DEFAULT_CHUNK_SIZE} characters")
+            console.print(f"   - [bold]Overlap:[/]    {Config.DEFAULT_OVERLAP} characters")
+            
+            # Estimate expected chunks
+            effective_chunk_size = Config.DEFAULT_CHUNK_SIZE - Config.DEFAULT_OVERLAP
+            if effective_chunk_size > 0:
+                expected_chunks = (len(content) + effective_chunk_size - 1) // effective_chunk_size
+                console.print(f"   - [bold]Est. Chunks:[/]  ~{expected_chunks}")
+            console.print("-" * 30)
+
+        except Exception as e:
+            console.print(f"⚠️ Could not read file to count words: {e}", style="yellow")
+        # --- End New Feature ---
         
         chunk_generator = self.generate_chunks_from_file(path)
         
